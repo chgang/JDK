@@ -75,15 +75,20 @@ protected final int tryAcquireShared(int unused) {
 		r < MAX_COUNT &&
 		compareAndSetState(c, c + SHARED_UNIT)) {
 		if (r == 0) {
+		    // 只有一个读线程
 			firstReader = current;
 			firstReaderHoldCount = 1;
 		} else if (firstReader == current) {
+		    // 可重入
 			firstReaderHoldCount++;
 		} else {
+		    // 最近一次线程 HoldCounter
 			HoldCounter rh = cachedHoldCounter;
 			if (rh == null || rh.tid != getThreadId(current))
+			    // 如果当前线程不是最近一次线程，从threadLocal中获取
 				cachedHoldCounter = rh = readHolds.get();
 			else if (rh.count == 0)
+			    // threadLocal初始化 HoldCounter 为一个孔对象，因此要把 cachedHoldCounter 设置 set 到 threadLocal
 				readHolds.set(rh);
 			rh.count++;
 		}
@@ -98,6 +103,7 @@ protected final int tryAcquireShared(int unused) {
 ### 排它锁/写锁检测
 
 如果另一个线程已经持有写锁/排它锁，那么读锁的获得将会马上失败。此部分源码:
+(用写锁作为排它锁)
 
 ```java
 Thread current = Thread.currentThread();
@@ -164,7 +170,9 @@ public final boolean hasQueuedPredecessors() {
 	Node t = tail; // Read fields in reverse initialization order
 	Node h = head;
 	Node s;
-	return h != t &&
+//	 h != t , s = h.next == null 必然是在当前线程之前已经插入节点，已经compareAndSetTail成功，还没有h.next == node;
+//	 如果 h.next != null && s.thread == Thread.currentThread() 则是可重入
+	return h != t && 
 		((s = h.next) == null || s.thread != Thread.currentThread());
 }
 ```
@@ -178,6 +186,56 @@ public final boolean hasQueuedPredecessors() {
 快速尝试其实就是一个CAS操作，源码见上面，再次不再 赘述。
 
 ### 完全尝试
+
+Syn.fullTryAcquireShared:
+
+```java
+final int fullTryAcquireShared(Thread current) {
+           
+            HoldCounter rh = null;
+            for (;;) {
+                int c = getState();
+                if (exclusiveCount(c) != 0) {
+                    if (getExclusiveOwnerThread() != current)
+                        return -1;
+                } else if (readerShouldBlock()) {
+                    if (firstReader == current) {
+                    } else {
+                        if (rh == null) {
+                            rh = cachedHoldCounter;
+                            if (rh == null || rh.tid != getThreadId(current)) {
+                                rh = readHolds.get();
+                                if (rh.count == 0)
+                                    readHolds.remove();
+                            }
+                        }
+                        if (rh.count == 0)
+                            return -1;
+                    }
+                }
+                if (sharedCount(c) == MAX_COUNT)
+                    throw new Error("Maximum lock count exceeded");
+                if (compareAndSetState(c, c + SHARED_UNIT)) {
+                    if (sharedCount(c) == 0) {
+                        firstReader = current;
+                        firstReaderHoldCount = 1;
+                    } else if (firstReader == current) {
+                        firstReaderHoldCount++;
+                    } else {
+                        if (rh == null)
+                            rh = cachedHoldCounter;
+                        if (rh == null || rh.tid != getThreadId(current))
+                            rh = readHolds.get();
+                        else if (rh.count == 0)
+                            readHolds.set(rh);
+                        rh.count++;
+                        cachedHoldCounter = rh; // cache for release
+                    }
+                    return 1;
+                }
+            }
+        }
+```
 
 所谓的完全尝试便是在死循环里执行快速尝试，直到成功为止。
 
