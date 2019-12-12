@@ -199,12 +199,15 @@ final int fullTryAcquireShared(Thread current) {
                     if (getExclusiveOwnerThread() != current)
                         return -1;
                 } else if (readerShouldBlock()) {
+                    // firstRearder == current 说明当前线程可重入
                     if (firstReader == current) {
                     } else {
                         if (rh == null) {
                             rh = cachedHoldCounter;
                             if (rh == null || rh.tid != getThreadId(current)) {
                                 rh = readHolds.get();
+                                // rh.count == 0 , 当前线程没有持有锁，不可重入，threadLocal 回收垃圾
+                                // rh.count ！= 0， 当前线程持有锁，可重入
                                 if (rh.count == 0)
                                     readHolds.remove();
                             }
@@ -270,6 +273,7 @@ Sync.tryReleaseShared:
 ```java
 protected final boolean tryReleaseShared(int unused) {
 	Thread current = Thread.currentThread();
+	// 每调用一次，重入次数减 1
 	if (firstReader == current) {
 		// assert firstReaderHoldCount > 0;
 		if (firstReaderHoldCount == 1)
@@ -291,10 +295,37 @@ protected final boolean tryReleaseShared(int unused) {
 	for (;;) {
 		int c = getState();
 		int nextc = c - SHARED_UNIT;
+		// compare 失败，for 循环重试
 		if (compareAndSetState(c, nextc))
 			return nextc == 0;
 	}
 }
+```
+
+AbstractQueuedSynchronizer.doReleaseShared
+
+```java
+ private void doReleaseShared() {
+        
+        for (;;) {
+            Node h = head;
+            if (h != null && h != tail) {
+                int ws = h.waitStatus;
+                if (ws == Node.SIGNAL) {
+                    // 为后继线程多增加一次尝试获取锁
+                    if (!compareAndSetWaitStatus(h, Node.SIGNAL, 0))
+                        continue;            // loop to recheck cases
+                    unparkSuccessor(h);
+                }
+                // semaphore 信号量时会根据 node.status < 0 判断 {@link AbstractQueuedSynchronizer#setHeadAndPropagate}
+                else if (ws == 0 &&
+                         !compareAndSetWaitStatus(h, 0, Node.PROPAGATE))
+                    continue;                // loop on failed CAS
+            }
+            if (h == head)                   // loop if head changed
+                break;
+        }
+    }
 ```
 
 ReadWriteLock采用了ThreadLocal来记录线程重入读锁的次数，这么做的原因是允许多个线程同时拥有读锁。
@@ -331,6 +362,8 @@ protected final boolean tryAcquire(int acquires) {
 	int w = exclusiveCount(c);
 	if (c != 0) {
 		// (Note: if c != 0 and w == 0 then shared count != 0)
+		// 1·读锁不可以重入写锁
+		// 2·写锁重入读锁或写锁
 		if (w == 0 || current != getExclusiveOwnerThread())
 			return false;
 		if (w + exclusiveCount(acquires) > MAX_COUNT)
