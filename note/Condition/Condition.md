@@ -6,6 +6,12 @@
 
 ConditionObject是AbstractQueuedSynchronizer的内部类。
 
+ConditionObject的await方法与object.wait方法的流程比较：
+
+wait方法：进入waitSet  >> 释放锁 >> 阻塞等待条件变量 >> 被唤醒，进入entryList等待获取锁
+
+await方法：进入条件队列 >> 唤醒同步队列的后继节点 >> 阻塞等待条件变量 >> 被唤醒，自旋等待获取锁
+
 ## 创建
 
 创建是通过Lock.newCondition()来完成的。
@@ -60,6 +66,7 @@ private Node addConditionWaiter() {
     Node t = lastWaiter;
     // If lastWaiter is cancelled, clean out.
     if (t != null && t.waitStatus != Node.CONDITION) {
+        // 剔除状态为取消的节点
         unlinkCancelledWaiters();
         t = lastWaiter;
     }

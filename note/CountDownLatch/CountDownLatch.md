@@ -26,6 +26,37 @@ public final void acquireSharedInterruptibly(int arg) throws InterruptedExceptio
 }
 ```
 
+AbstractQueuedSynchronizer.doAcquireSharedInterruptibly
+
+```java
+private void doAcquireSharedInterruptibly(int arg)
+        throws InterruptedException {
+        final Node node = addWaiter(Node.SHARED);
+        boolean failed = true;
+        try {
+            for (;;) {
+                final Node p = node.predecessor();
+                if (p == head) {
+                    int r = tryAcquireShared(arg);
+                    if (r >= 0) {
+                        setHeadAndPropagate(node, r);
+                        p.next = null; // help GC
+                        failed = false;
+                        return;
+                    }
+                }
+                if (shouldParkAfterFailedAcquire(p, node) &&
+                    parkAndCheckInterrupt())
+                    // 和doAcquireShared设置线程中断相比，变成抛出中断异常
+                    throw new InterruptedException();
+            }
+        } finally {
+            if (failed)
+                cancelAcquire(node);
+        }
+    }
+```
+
 这个套路已经见过很多次了，关键的逻辑便是Sync.tryAcquireShared:
 
 ```java
