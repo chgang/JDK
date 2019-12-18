@@ -222,6 +222,7 @@ private void unlinkCancelledWaiters() {
         if (t.waitStatus != Node.CONDITION) {
             t.nextWaiter = null;
             if (trail == null)
+                // 从条件队列中删除firstWaiter,由于firstWaiter已经进入同步队列
                 firstWaiter = next;
             else
                 trail.nextWaiter = next;
